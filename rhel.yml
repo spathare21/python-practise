@@ -1,0 +1,176 @@
+---
+# tasks file for rhel
+- name: RHEL
+  hosts: localhost
+  become: true
+  tasks:
+    - name: Download .rpm package
+      get_url:
+        dest: /tmp/epel-release-latest-7.noarch.rpm 
+        url: https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+        force: no
+
+    - name: Install Downloaded .rpm package
+      yum:
+        name: /tmp/epel-release-latest-7.noarch.rpm
+        state: present
+
+    - name: Update all
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Install necessary packages
+      yum:
+        name: "{{ item }}"
+        state: latest
+      with_items:
+        - gcc
+        - python34-devel
+        - python34-pip
+        - git
+        - nginx
+      ignore_errors: yes
+
+    - name: Install pgdg package
+      yum:
+        name: http://yum.postgresql.org/9.5/redhat/rhel-7-x86_64/pgdg-redhat95-9.5-3.noarch.rpm
+        state: present
+
+
+    - name: Install postgresql package's
+      yum: 
+        name: "{{item}}"
+        state: latest
+      with_items:
+        - postgresql95
+        - postgresql95-server
+        - postgresql95-libs
+        - postgresql95-contrib
+        - postgresql95-devel
+
+    - name: Creating soft link
+      file:
+        src: /usr/pgsql-9.5/bin/pg_config
+        dest: /usr/bin/pg_config
+        state: link
+
+    - name: Init db
+      command: '/usr/pgsql-9.5/bin/postgresql95-setup initdb'
+      ignore_errors: yes
+      
+
+    - name: Coping content
+      copy:
+        content: "(ident -> md5; peer-> ident)"
+        dest: /var/lib/pgsql/9.5/data/pg_hba.conf
+
+    - name: Start postgresql-9.5
+      service: 
+        name: postgresql-9.5
+        state: "{{item}}"
+      with_items: 
+        - started
+        - enabled
+
+    - command: sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+
+    - command: sudo -u postgres psql -c "CREATE DATABASE transtats"
+
+    - name: Install pip3
+      easy_install: 
+        name: pip3
+
+    - name: Install virtualenv
+      command: 'pip3 install virtualenv'
+
+    - name: create user transtats
+      user:
+        name: transtats
+
+    - name: switch user to transtats
+      command: '/bin/su - transtats'
+
+    - name: clone a git repo
+      git:
+        repo: https://github.com/transtats/transtats.git
+
+    - name: Create virtual env
+      command: 'cd /home/transtats/transtats && mkvirtualenv --system-site-packages --python=python3 projectenv'
+
+    - name: activate virtual env
+      shell: source projectenv/bin/activate   
+
+    - name: install requirements
+      pip: 
+        requirements: requirements/base.txt
+        virtualenv: /home/transtats/transtats/projectenv
+
+    - copy:
+        src: transtats/settings/keys.json.example
+        dest: transtats/settings/keys.json
+
+    - command: 'make migrate'        
+
+    - command: 'gunicorn --bind 0.0.0.0:8000 transtats.wsgi:application (test) && exit'
+
+    - copy:
+        content: |        
+          [Unit]
+          Description=gunicorn daemon
+          After=network.target
+
+          [Service]
+          User=transtats
+          Group=nginx
+          WorkingDirectory=/home/transtats/transtats
+          ExecStart=/home/transtats/transtats/projectenv/bin/gunicorn --workers 3 --bind unix:/home/transtats/transtats/transtats/transtats.sock transtats.wsgi:application
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/gunicorn.service
+        
+
+    - service:
+        name: gunicorn
+        state: enabled
+
+    - service:
+        name: gunicorn
+        state: started
+
+
+    - copy:
+        content: | 
+          server {
+                   listen 80;
+                   server_name transtats.int.devlab.redhat.com;
+
+                   location = /favicon.ico { access_log off; log_not_found off; }
+                   location /static/ {
+                   root /home/transtats/transtats/transtats;
+                  }
+
+                  location / {
+                     proxy_set_header Host $http_host;
+                     proxy_set_header X-Real-IP $remote_addr;
+                     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                     proxy_set_header X-Forwarded-Proto $scheme;
+                     proxy_pass http://unix:/home/transtats/transtats/transtats/transtats.sock;
+                     proxy_connect_timeout 180s;
+                     proxy_read_timeout 300s;
+                  }
+                }
+        dest: /etc/nginx/nginx.conf
+
+    - command: 'usermod -a -G transtats nginx'
+
+    - command: 'chmod 710 /home/transtats'
+
+    - service: 
+        name: nginx
+        state: enabled
+
+    - service:
+        name: nginx
+        state: started

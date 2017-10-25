@@ -1,0 +1,93 @@
+---
+# tasks file for fedora
+
+- name: fedora
+  hosts: localhost
+  become: True
+  environment:
+    DATABASE_NAME: transtats
+    DATABASE_USER: postgres
+    DATABASE_PASSWD: postgres
+    DATABASE_HOST: localhost
+    PYTHONUNBUFFERED: 1
+  tasks:
+    - name: Update all
+      dnf:
+        name: '*'
+        state: latest
+
+    - name: Install necessary packages
+      dnf:
+        name: "{{ item }}"
+        state: latest
+      with_items:
+        - gcc
+        - findutils
+        - git 
+        - python
+        - python34-devel
+        - python34-pip
+        - redhat-rpm-config
+      ignore_errors: yes
+
+    - name: Install postgresql package's
+      dnf: 
+        name: "{{item}}"
+        state: latest
+      with_items:
+        - postgresql95
+        - postgresql95-server
+        - postgresql95-libs
+        - postgresql95-contrib
+        - postgresql95-devel
+        - openssh-server 
+
+    - name: Run ssh-keygen
+      command: /usr/bin/ssh-keygen -A
+
+    - name: Init db
+      command: '/usr/pgsql-9.5/bin/postgresql95-setup initdb'
+      ignore_errors: yes
+
+    - name: Coping content
+      copy:
+        content: "(ident -> md5; peer-> ident)"
+        dest: /var/lib/pgsql/9.5/data/pg_hba.conf
+
+    - name: Change permission 
+      file:
+        path: /var/lib/pgsql/9.5/data
+        owner: 26
+        group: 26
+        mode: 0755
+
+    - name: create workspace dir
+      file:
+        path: /workspace 
+        state: directory
+
+    - name: Go to workspace
+      command: cd /workspace
+
+    - name: clone a git repo
+      git:
+        repo: https://github.com/transtats/transtats.git
+
+    - copy:
+        src: deploy/docker/conf/sample_keys.json
+        dest: /workspace/transtats/settings/keys.json
+
+    - name: Install requirements
+      command: pip3 install -r /workspace/requirements/dev.txt 
+
+    - name: create ssh dir 
+      file: 
+        path: /var/run/sshd 
+        state: directory 
+
+    - name: sshd
+      command: sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config 
+
+    - name: run sshd
+      command: "'/usr/sbin/sshd' '-D'"
+
