@@ -2,7 +2,7 @@
 # tasks file for rhel
 - name: RHEL
   hosts: localhost
-  become: True
+  become: true
   tasks:
     - name: Download .rpm package
       get_url:
@@ -65,13 +65,13 @@
         content: "(ident -> md5; peer-> ident)"
         dest: /var/lib/pgsql/9.5/data/pg_hba.conf
 
-    - name: Start postgresql-9.5
-      service: 
+    - service:
         name: postgresql-9.5
-        state: "{{item}}"
-      with_items: 
-        - started
-        - enabled
+        state: enabled
+        
+    - service:
+        name: postgresql-9.5
+        state: started        
 
     - command: sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 
